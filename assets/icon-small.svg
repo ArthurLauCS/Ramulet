@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- App icon for 16-32px: same plate, branch drawn with thick strokes and solid nodes so it survives at 16px -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2FCB8E"/>
+      <stop offset="1" stop-color="#05795A"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="url(#bg)"/>
+  <g fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round">
+    <path d="M12 9 V23"/>
+    <path d="M12 20 C12 15 20 16 20 12"/>
+  </g>
+  <path d="M21 10 C22 6 26 5 27 5 C27 8 25 11 21 10 Z" fill="#D9F99D"/>
+  <g fill="#FFFFFF">
+    <circle cx="12" cy="8" r="3"/>
+    <circle cx="12" cy="24" r="3"/>
+    <circle cx="20" cy="12" r="3"/>
+  </g>
+</svg>

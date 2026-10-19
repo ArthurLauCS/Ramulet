@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- App icon (40px and up): emerald plate with a git branch that sprouts a leaf (ramulus = small branch) -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3FD69B"/>
+      <stop offset="0.55" stop-color="#10A374"/>
+      <stop offset="1" stop-color="#05795A"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect x="12" y="12" width="232" height="232" rx="56" fill="url(#bg)"/>
+  <rect x="12" y="12" width="232" height="232" rx="56" fill="url(#gloss)"/>
+  <g fill="none" stroke="#FFFFFF" stroke-width="18" stroke-linecap="round">
+    <path d="M96 76 V180"/>
+    <path d="M96 160 C96 124 160 134 160 100"/>
+  </g>
+  <path d="M168 86 C176 52 206 40 222 40 C220 66 200 92 168 86 Z" fill="#D9F99D"/>
+  <path d="M170 84 L204 54" stroke="#05795A" stroke-width="4" stroke-linecap="round" opacity="0.45"/>
+  <g fill="#0B8F65" stroke="#FFFFFF" stroke-width="14">
+    <circle cx="96" cy="66" r="19"/>
+    <circle cx="96" cy="190" r="19"/>
+    <circle cx="160" cy="96" r="19"/>
+  </g>
+</svg>
