@@ -15,12 +15,12 @@ A desktop tile for Windows that shows every open Cursor / VS Code window as **re
 - **Closed windows:** when you close an editor window, its folder stays below, greyed out. Click it to reopen the folder in Cursor or VS Code.
 - **Aliases:** give a repo or a branch your own name. A repo alias applies to all of that repo's tiles.
 - **Always current:** updates as soon as editor windows open, close or switch files; a branch switched in a terminal shows up within 2 seconds.
-- **Light:** a single ~500 KB exe, about 7 MB of memory, close to 0% CPU when idle. No editor extension, no editor settings changed, no git process started.
+- **Light:** a single ~480 KB exe, about 6 MB of memory (private bytes, measured with 4 tiles), close to 0% CPU when idle. No editor extension, no editor settings changed, no git process started.
 - English and Chinese interface.
 
 ## Install
 
-Download `Ramulet-Setup-<version>.exe` from [Releases](https://github.com/ArthurLauCS/Ramulet/releases/latest) and run it. Requires 64-bit Windows 10 or 11; Windows 11 is recommended (rounded corners and shadows).
+Download `Ramulet-Setup-<version>.exe` from [Releases](https://github.com/ArthurLauCS/Ramulet/releases/latest) and run it. Requires 64-bit Windows 10 or 11; Windows 11 is recommended (it ships the icon font and the Microsoft YaHei UI used for menus). The installer is about 3.7 MB because it carries two open-source fonts (about 2.7 MB, SIL OFL; see `THIRD_PARTY_NOTICES.txt`): Smiley Sans for repo names and IBM Plex Mono for branch names. If the `fonts` folder next to the exe is missing, Ramulet falls back to system fonts. Smiley Sans covers only part of the CJK characters; the rest are drawn in Microsoft YaHei UI.
 
 - The installer is not signed with a commercial code-signing certificate, so Windows may show "Windows protected your PC". Click **More info** → **Run anyway**.
 - It installs for the current user only and does not ask for administrator permission.
@@ -49,15 +49,16 @@ Ramulet reads the editor windows' titles (`file - folder - Cursor`), looks the f
 Requires Rust (stable) on 64-bit Windows 10 or 11.
 
 ```bash
+powershell -File scripts/fonts.ps1   # once: downloads the two fonts into assets/fonts
 cargo build --release
 ```
 
-The exe is `target/release/ramulet.exe`.
+The exe is `target/release/ramulet.exe`. It looks for fonts in a `fonts` folder next to the exe, then in `assets/fonts` two levels up (the dev layout).
 
 - `cargo test` runs the unit tests.
 - `ramulet.exe --dump out.txt` writes the detected windows and the scan time without opening a window.
 - `ramulet.exe --demo --data <empty folder>` shows made-up repos (used for the screenshots).
-- `powershell -File scripts/installer.ps1` builds the installer into `target/installer` (needs [Inno Setup 6](https://jrsoftware.org/isinfo.php)).
+- `powershell -File scripts/installer.ps1` fetches the fonts if needed and builds the installer into `target/installer` (needs [Inno Setup 6](https://jrsoftware.org/isinfo.php)).
 - To change the icon, edit `assets/icon.svg` / `assets/icon-small.svg` and run `powershell -File scripts/icon.ps1` (needs Chrome and the Windows SDK's rc.exe).
 
 ## License

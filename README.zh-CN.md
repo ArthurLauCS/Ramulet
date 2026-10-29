@@ -15,12 +15,12 @@ Windows 桌面磁贴：把每个打开的 Cursor / VS Code 窗口显示成 **仓
 - **已关闭的窗口：** 关掉编辑器窗口后，它的文件夹置灰留在下面，点一下用 Cursor 或 VS Code 重新打开。
 - **别名：** 仓库和分支都可以起自己的名字，仓库别名对这个仓库的所有磁贴生效。
 - **实时：** 编辑器窗口开关、切换文件时立刻更新；在终端里切分支，2 秒内跟上。
-- **轻量：** 单个约 500 KB 的 exe，内存约 7 MB，空闲时 CPU 接近 0%。不用装编辑器插件，不改编辑器设置，不起 git 进程。
+- **轻量：** 单个约 480 KB 的 exe，内存约 6 MB（私有内存，4 个磁贴实测），空闲时 CPU 接近 0%。不用装编辑器插件，不改编辑器设置，不起 git 进程。
 - 中英文界面。
 
 ## 安装
 
-从 [Releases](https://github.com/ArthurLauCS/Ramulet/releases/latest) 下载 `Ramulet-Setup-<版本>.exe` 运行即可。需要 64 位 Windows 10 或 11，推荐 Windows 11（有圆角和阴影）。
+从 [Releases](https://github.com/ArthurLauCS/Ramulet/releases/latest) 下载 `Ramulet-Setup-<版本>.exe` 运行即可。需要 64 位 Windows 10 或 11，推荐 Windows 11（自带图标字体和菜单用的微软雅黑 UI）。安装包约 3.7 MB，因为带了两款开源字体（约 2.7 MB，SIL OFL，见 `THIRD_PARTY_NOTICES.txt`）：仓库名用得意黑，分支名用 IBM Plex Mono。exe 旁的 `fonts` 文件夹缺了，就退回系统字体。得意黑只收了一部分汉字，其余的字用微软雅黑 UI 显示。
 
 - 安装包没有商业代码签名，Windows 可能提示“Windows 已保护你的电脑”：点“更多信息”→“仍要运行”。
 - 只为当前用户安装，不需要管理员权限。
@@ -49,15 +49,16 @@ Windows 桌面磁贴：把每个打开的 Cursor / VS Code 窗口显示成 **仓
 需要 Rust（stable），64 位 Windows 10 或 11。
 
 ```bash
+powershell -File scripts/fonts.ps1   # 只需一次：把两款字体下载到 assets/fonts
 cargo build --release
 ```
 
-exe 在 `target/release/ramulet.exe`。
+exe 在 `target/release/ramulet.exe`。字体先找 exe 旁的 `fonts` 文件夹，再找上两级的 `assets/fonts`（开发布局）。
 
 - `cargo test` 跑单元测试。
 - `ramulet.exe --dump out.txt` 不开窗口，把扫到的窗口和扫描耗时写到文件。
 - `ramulet.exe --demo --data <空文件夹>` 显示一组虚构的仓库（截图用）。
-- `powershell -File scripts/installer.ps1` 打安装包到 `target/installer`（需要 [Inno Setup 6](https://jrsoftware.org/isinfo.php)）。
+- `powershell -File scripts/installer.ps1` 按需下载字体，再打安装包到 `target/installer`（需要 [Inno Setup 6](https://jrsoftware.org/isinfo.php)）。
 - 改图标：编辑 `assets/icon.svg` / `assets/icon-small.svg`，运行 `powershell -File scripts/icon.ps1`（需要 Chrome 和 Windows SDK 的 rc.exe）。
 
 ## 许可

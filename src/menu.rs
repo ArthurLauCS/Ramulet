@@ -4,7 +4,6 @@
 
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Direct2D::Common::*;
-use windows::Win32::Graphics::Direct2D::*;
 use windows::Win32::Graphics::Dwm::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::Controls::WM_MOUSELEAVE;
@@ -12,19 +11,24 @@ use windows::Win32::UI::HiDpi::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::*;
-use windows_numerics::Vector2;
 
 use crate::config::{en, tr};
 use crate::editors::Editor;
 use crate::gfx::Surface;
-use crate::view::{Align, P, Theme, inside, rect, rgba, with_a};
+use crate::theme::*;
+use crate::view::{Align, P, inside, rect};
 use crate::{App, app, sys};
 
 pub const MENU_CLASS: PCWSTR = w!("RamuletMenu");
 const W: f32 = 272.0;
 const ROW: f32 = 34.0;
 const EDGE: f32 = 6.0;
+/// 内容左右边：文字、开关、分段条、分隔线、滑块（连同圆钮）都在 X 和 W - X 之间
 const X: f32 = 14.0;
+/// 滑块方块的半宽：中心只走到离两边 THUMB 处，拉满也不出内容边
+const THUMB: f32 = 5.0;
+/// 弹出层右、下两边留给硬阴影的宽度
+const SH: f32 = SHADOW_POP;
 pub const OPACITY_MIN: u32 = 20;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -67,7 +71,7 @@ pub struct Menu {
 
 fn rows(a: &App) -> Vec<Row> {
     let mut v = Vec::new();
-    // 右键点在磁贴上：最上面是这块磁贴的操作。Segoe Fluent Icons：E8A7 在新窗口打开，E711 关闭，E8AC 重命名
+    // 右键点在磁贴上：最上面是这块磁贴的操作。Segoe Fluent Icons：E8A7 在新窗口打开，E8BB 关闭（叉号占满 14，和别的图标一样大），E8AC 重命名
     if let Some(t) = &a.target {
         // 已关闭的窗口（hwnd 为 0）：还没选过默认编辑器时（第一次点它）是一排二选一，选过之后是两条“用 … 打开”
         if t.hwnd == 0 {
@@ -78,7 +82,7 @@ fn rows(a: &App) -> Vec<Row> {
                 v.push(Row::Act(Id::OpenWith(Editor::Cursor), "\u{E8A7}", tr("用 Cursor 打开", "Open with Cursor")));
                 v.push(Row::Act(Id::OpenWith(Editor::Code), "\u{E8A7}", tr("用 VS Code 打开", "Open with VS Code")));
             }
-            v.push(Row::Act(Id::Forget, "\u{E711}", tr("从列表移除", "Remove from list")));
+            v.push(Row::Act(Id::Forget, "\u{E8BB}", tr("从列表移除", "Remove from list")));
             v.push(Row::Sep);
         }
         v.push(Row::Act(Id::RepoAlias, "\u{E8AC}", tr("设置仓库别名…", "Set repo alias…")));
@@ -123,18 +127,18 @@ pub fn show(a: &mut App, pt: POINT) {
         let (mut dx, mut dy) = (96, 96);
         let _ = GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &mut dx, &mut dy);
         let s = dx as f32 / 96.0;
-        let (w, h) = ((W * s) as i32, (height(a) * s) as i32);
+        let (w, h) = (((W + SH) * s) as i32, ((height(a) + SH) * s) as i32);
         let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
         let _ = GetMonitorInfoW(mon, &mut mi);
         let wa = mi.rcWork;
         let x = if pt.x + w > wa.right { pt.x - w } else { pt.x };
         let y = if pt.y + h > wa.bottom { pt.y - h } else { pt.y };
         let (x, y) = (x.clamp(wa.left, (wa.right - w).max(wa.left)), y.clamp(wa.top, (wa.bottom - h).max(wa.top)));
-        // WS_THICKFRAME 只为了要系统阴影，边框由 WM_NCCALCSIZE 去掉
-        let Ok(hwnd) = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOREDIRECTIONBITMAP, MENU_CLASS, w!("Ramulet menu"), WS_POPUP | WS_THICKFRAME, x, y, w, h, None, None, None, None) else { return };
-        let dark = BOOL::from(a.sys_dark);
+        // 没有系统阴影：硬阴影自己画在窗口右、下多出的 SH 里
+        let Ok(hwnd) = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOREDIRECTIONBITMAP, MENU_CLASS, w!("Ramulet menu"), WS_POPUP, x, y, w, h, None, None, None, None) else { return };
+        let dark = BOOL::from(a.theme.dark);
         let _ = DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark as *const _ as _, 4);
-        let corner = DWMWCP_ROUND;
+        let corner = DWMWCP_DONOTROUND;
         let _ = DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner as *const _ as _, 4);
         a.menu = Some(Box::new(Menu { hwnd, surf: None, hits: Vec::new(), hover: None, focus: None, sliding: false, tracking: false, pressed: None }));
         let _ = ShowWindow(hwnd, SW_SHOW);
@@ -163,83 +167,86 @@ fn draw(a: &App, m: &mut Menu) {
         if a.gfx.bind(&surf, dpi).is_err() {
             return;
         }
-        let th = Theme::panel(a.sys_dark);
+        // 跟磁贴实际用的深浅色走（透明度低于 50% 时磁贴强制深色）
+        let th = Theme::panel(a.theme.dark);
         let f = &a.fonts;
         let p = P { dc: &a.gfx.dc, br: &a.gfx.brush, dw: &a.dw, shadow: false };
-        let w = rc.right as f32 * 96.0 / dpi;
+        // 窗口比面板大 SH：右、下两边给硬阴影
+        let w = rc.right as f32 * 96.0 / dpi - SH;
+        let h = rc.bottom as f32 * 96.0 / dpi - SH;
         let mut hits = Vec::new();
         let focused = m.focus.and_then(|i| m.hits.get(i)).map(|x| x.1);
         let hot = |id: Id| m.hover == Some(id) || focused == Some(id);
         a.gfx.dc.BeginDraw();
-        a.gfx.dc.Clear(Some(&th.tint));
+        a.gfx.dc.Clear(Some(&rgba(0.0, 0.0, 0.0, 0.0)));
+        p.block(rect(0.0, 0.0, w, h), th.surface, th.border, th.shadow, SH);
         let mut y = EDGE;
         for row in rows(a) {
             let rh = row_h(&row);
             match row {
                 Row::Slider => {
                     let v = a.cfg.opacity;
-                    p.text(tr("磁贴透明度", "Tile opacity"), rect(X, y + 4.0, w - X, y + 26.0), &f.f12, th.text, Align::L);
-                    p.text(&format!("{v}%"), rect(X, y + 4.0, w - X, y + 26.0), &f.f12b, th.muted, Align::R);
-                    let (l, r, cy) = (X + 8.0, w - X - 8.0, y + 42.0);
+                    p.text(tr("磁贴透明度", "Tile opacity"), rect(X, y + 4.0, w - X, y + 26.0), &f.body13, th.text, Align::L);
+                    p.text(&format!("{v}%"), rect(X, y + 4.0, w - X, y + 26.0), &f.mono12, th.text, Align::R);
+                    let (l, r, cy) = (X + THUMB, w - X - THUMB, y + 42.0);
                     let x = l + (r - l) * (v - OPACITY_MIN) as f32 / (100 - OPACITY_MIN) as f32;
-                    p.fill(rect(l, cy - 2.0, r, cy + 2.0), 2.0, th.track);
-                    p.fill(rect(l, cy - 2.0, x, cy + 2.0), 2.0, th.accent);
-                    // 和 Win11 滑块一样：外圈底色加细边，中间一颗强调色圆点，悬停或拖动时变大
-                    p.dot(x, cy, 10.0, th.tint);
-                    p.color(th.track);
-                    a.gfx.dc.DrawEllipse(&D2D1_ELLIPSE { point: Vector2 { X: x, Y: cy }, radiusX: 10.0, radiusY: 10.0 }, &a.gfx.brush, 1.0, None);
-                    p.dot(x, cy, if m.sliding || hot(Id::Opacity) { 7.0 } else { 5.5 }, th.accent);
+                    // 轨道：2 px 边框的细槽，已走过的部分是强调色；滑块是 2 px 边框的方块
+                    p.block(rect(X, cy - 4.0, w - X, cy + 4.0), th.sunk, th.border, th.shadow, 0.0);
+                    p.fill(rect(X + BORDER, cy - 2.0, x, cy + 2.0), th.accent);
+                    let on = m.sliding || hot(Id::Opacity);
+                    p.block(rect(x - THUMB, cy - 10.0, x + THUMB, cy + 10.0), th.accent, th.border, th.shadow, if on { 2.0 } else { 0.0 });
                     hits.push((rect(X - 4.0, y + 28.0, w - X + 4.0, y + 56.0), Id::Opacity));
                 }
                 Row::Switch(id, label, on) => {
-                    let r = rect(EDGE, y + 1.0, w - EDGE, y + rh - 1.0);
+                    let r = rect(BORDER, y + 1.0, w - BORDER, y + rh - 1.0);
                     if hot(id) {
-                        p.fill(r, 5.0, th.hover);
+                        p.fill(r, th.sunk);
                     }
-                    p.text(label, rect(X, y, w - 64.0, y + rh), &f.f12, th.text, Align::L);
-                    let sw = rect(w - X - 36.0, y + rh / 2.0 - 10.0, w - X, y + rh / 2.0 + 10.0);
+                    p.text(label, rect(X, y, w - 64.0, y + rh), &f.body13, th.text, Align::L);
+                    // 复选框：18 见方，选中是强调色填充加对勾
+                    let cy = y + rh / 2.0;
+                    let bx = rect(w - X - 18.0, cy - 9.0, w - X, cy + 9.0);
+                    p.block(bx, if on { th.accent } else { th.surface }, th.border, th.shadow, 0.0);
                     if on {
-                        p.fill(sw, 10.0, th.accent);
-                        p.dot(sw.right - 10.0, y + rh / 2.0, 6.0, rgba(1.0, 1.0, 1.0, 1.0));
-                    } else {
-                        p.color(th.muted);
-                        a.gfx.dc.DrawRoundedRectangle(&D2D1_ROUNDED_RECT { rect: rect(sw.left + 0.5, sw.top + 0.5, sw.right - 0.5, sw.bottom - 0.5), radiusX: 9.5, radiusY: 9.5 }, &a.gfx.brush, 1.0, None);
-                        p.dot(sw.left + 10.0, y + rh / 2.0, 5.0, th.muted);
+                        p.tick(bx.left + 4.0, cy - 0.5, th.ink);
                     }
                     hits.push((r, id));
                 }
                 Row::Seg(label, opts) => {
-                    p.text(label, rect(X, y + 2.0, w - X, y + 22.0), &f.f11, th.muted, Align::L);
-                    let bar = rect(X - 2.0, y + 24.0, w - X + 2.0, y + 52.0);
-                    p.fill(bar, 6.0, th.faint);
-                    let sw = (bar.right - bar.left - 4.0) / opts.len() as f32;
+                    p.text(label, rect(X, y + 2.0, w - X, y + 22.0), &f.body12, th.muted, Align::L);
+                    let bar = rect(X, y + 24.0, w - X, y + 52.0);
+                    p.block(bar, th.surface, th.border, th.shadow, 0.0);
+                    let n = opts.len();
+                    let sw = (bar.right - bar.left - 2.0 * BORDER) / n as f32;
                     for (k, (id, text, on)) in opts.into_iter().enumerate() {
-                        let b = rect(bar.left + 2.0 + k as f32 * sw, bar.top + 2.0, bar.left + 2.0 + (k + 1) as f32 * sw, bar.bottom - 2.0);
+                        let b = rect(bar.left + BORDER + k as f32 * sw, bar.top + BORDER, bar.left + BORDER + (k + 1) as f32 * sw, bar.bottom - BORDER);
                         if on {
-                            p.fill(b, 4.0, with_a(th.accent, if th.dark { 0.28 } else { 0.18 }));
+                            p.fill(b, th.accent);
                         } else if hot(id) {
-                            p.fill(b, 4.0, th.hover);
+                            p.fill(b, th.sunk);
                         }
-                        if focused == Some(id) {
-                            p.color(th.text);
-                            a.gfx.dc.DrawRoundedRectangle(&D2D1_ROUNDED_RECT { rect: b, radiusX: 4.0, radiusY: 4.0 }, &a.gfx.brush, 1.0, None);
+                        if k > 0 {
+                            p.fill(rect(b.left - BORDER / 2.0, b.top, b.left + BORDER / 2.0, b.bottom), th.border);
                         }
-                        p.text(text, b, if on { &f.f12b } else { &f.f12 }, if on { th.text } else { th.muted }, Align::C);
+                        p.text(text, b, if on { &f.body12b } else { &f.body12 }, if on { th.ink } else { th.text }, Align::C);
                         hits.push((b, id));
                     }
                 }
                 Row::Act(id, glyph, label) => {
-                    let r = rect(EDGE, y + 1.0, w - EDGE, y + rh - 1.0);
+                    let r = rect(BORDER, y + 1.0, w - BORDER, y + rh - 1.0);
                     let danger = id == Id::Exit && hot(id);
-                    if hot(id) {
-                        p.fill(r, 5.0, if danger { with_a(th.danger, 0.16) } else { th.hover });
+                    if danger {
+                        p.fill(r, th.red);
+                    } else if hot(id) {
+                        p.fill(r, th.sunk);
                     }
-                    let c = if danger { th.danger } else { th.text };
-                    p.text(glyph, rect(X, y, X + 20.0, y + rh), &f.icon, if danger { th.danger } else { th.muted }, Align::C);
-                    p.text(label, rect(X + 30.0, y, w - X, y + rh), &f.f12, c, Align::L);
+                    let c = if danger { th.ink } else { th.text };
+                    // 图标笔画左边和开关行的文字左边对齐
+                    p.ink(glyph, rect(X, y, X + 20.0, y + rh), &f.icon, if danger { th.ink } else { th.muted }, Align::L);
+                    p.text(label, rect(X + 30.0, y, w - X, y + rh), &f.body13, c, Align::L);
                     hits.push((r, id));
                 }
-                Row::Sep => p.fill(rect(X - 2.0, y + 4.0, w - X + 2.0, y + 5.0), 0.0, th.faint),
+                Row::Sep => p.fill(rect(X, y + 4.0, w - X, y + 5.0), th.rule),
             }
             y += rh;
         }
@@ -259,7 +266,7 @@ fn hit(m: &Menu, lp: LPARAM) -> Option<Id> {
 fn slide(a: &mut App, m: &Menu, lp: LPARAM) {
     let s = unsafe { GetDpiForWindow(m.hwnd) } as f32 / 96.0;
     let x = (lp.0 as i16) as f32 / s;
-    let (l, r) = (X + 8.0, W - X - 8.0);
+    let (l, r) = (X + THUMB, W - X - THUMB);
     let t = ((x - l) / (r - l)).clamp(0.0, 1.0);
     let v = OPACITY_MIN + ((t * (100 - OPACITY_MIN) as f32 / 5.0).round() as u32) * 5;
     if v != a.cfg.opacity {

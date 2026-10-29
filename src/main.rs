@@ -9,10 +9,12 @@
 mod config;
 mod edit;
 mod editors;
+mod fontload;
 mod gfx;
 mod json;
 mod menu;
 mod sys;
+mod theme;
 mod view;
 
 use std::path::{Path, PathBuf};
@@ -39,7 +41,8 @@ use windows::core::*;
 use config::Config;
 use editors::{Editor, Scanner, Win};
 use sys::wide;
-use view::{Fonts, Hit, Theme};
+use theme::Theme;
+use view::{Fonts, Hit};
 
 const CLASS: PCWSTR = w!("RamuletMain");
 /// 系统窗口事件（前台切换、窗口显示 / 隐藏 / 销毁 / 改标题），wParam 是事件号，lParam 是窗口
@@ -74,8 +77,6 @@ pub struct App {
     tray_icon: HICON,
     taskbar_created: u32,
     scan_pending: bool,
-    /// 系统主题是不是深色（菜单跟它走；磁贴在低透明度时会强制深色）
-    pub sys_dark: bool,
     pub menu: Option<Box<menu::Menu>>,
     pub hits: Vec<(D2D_RECT_F, Hit)>,
     pub hover: Option<Hit>,
@@ -162,15 +163,16 @@ impl App {
     }
 
     fn load_theme(&mut self) {
-        self.sys_dark = self.force_dark.unwrap_or_else(|| sys::reg_dword(w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"), w!("AppsUseLightTheme")) != Some(1));
-        // 透明度低于 50% 时底色太薄，深色字在深色壁纸上看不清：不管系统主题，都用桌面图标那样的白字加阴影；同时关掉模糊，透出壁纸
+        let sys_dark = self.force_dark.unwrap_or_else(|| sys::reg_dword(w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"), w!("AppsUseLightTheme")) != Some(1));
+        // 透明度低于 50% 时底色太薄，深色字在深色壁纸上看不清：不管系统主题，都用桌面图标那样的白字加阴影；同时关掉模糊，透出壁纸。
+        // 菜单和改别名的小输入框跟着磁贴实际用的深浅色走
         let o = self.cfg.opacity.clamp(menu::OPACITY_MIN, 100) as f32 / 100.0;
-        let dark = self.sys_dark || o < 0.5;
+        let dark = sys_dark || o < 0.5;
         self.theme = Theme::new(dark, o);
         unsafe {
             let d = BOOL::from(dark);
             let _ = DwmSetWindowAttribute(self.hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &d as *const _ as _, 4);
-            let corner = DWMWCP_ROUND;
+            let corner = DWMWCP_DONOTROUND;
             let _ = DwmSetWindowAttribute(self.hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner as *const _ as _, 4);
             // 系统亚克力（DWMSBT_TRANSIENTWINDOW）在窗口未激活时退成纯色，磁贴几乎总是未激活，
             // 所以用 SetWindowCompositionAttribute 的亚克力模糊：未公开，但从 Win10 起一直可用（和 ClaudeTile 一样）
@@ -190,8 +192,8 @@ impl App {
             type Swca = unsafe extern "system" fn(HWND, *mut Data) -> BOOL;
             if let Some(f) = GetProcAddress(GetModuleHandleW(w!("user32.dll")).unwrap_or_default(), s!("SetWindowCompositionAttribute")) {
                 let f: Swca = std::mem::transmute(f);
-                // 4 = ACCENT_ENABLE_ACRYLICBLURBEHIND；染色交给 D2D 画的底色
-                let mut accent = Accent { state: if o >= 0.5 { 4 } else { 0 }, flags: 0, tint: 0x01000000, anim: 0 };
+                // brutal 不用模糊：state 0 = 关掉（以前是 4 = 亚克力）；底色由 D2D 画，带透明度
+                let mut accent = Accent { state: 0, flags: 0, tint: 0x01000000, anim: 0 };
                 let mut d = Data { attr: 19, data: &mut accent, size: size_of::<Accent>() };
                 let _ = f(self.hwnd, &mut d);
             }
@@ -426,7 +428,7 @@ impl App {
                     (edit::Key::Branch(k.0, k.1), config::tr("分支别名", "Branch alias"), t.branch.clone(), cur)
                 };
                 let cur = cur.cloned().unwrap_or_else(|| orig.clone());
-                edit::open(self.hwnd.0 as isize, key, format!("{label} · {orig}"), cur, self.menu_pt, self.sys_dark);
+                edit::open(self.hwnd.0 as isize, key, format!("{label} · {orig}"), cur, self.menu_pt, self.theme.dark);
                 return true;
             }
             // 第一次选的编辑器记成默认，之后点已关闭的磁贴直接用它
@@ -789,7 +791,6 @@ fn main() {
             tray_icon,
             taskbar_created: RegisterWindowMessageW(w!("TaskbarCreated")),
             scan_pending: false,
-            sys_dark: true,
             menu: None,
             hits: Vec::new(),
             hover: None,
