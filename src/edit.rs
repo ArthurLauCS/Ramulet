@@ -12,6 +12,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::*;
 
 use crate::config::tr;
+use crate::theme::*;
 
 const CLASS: PCWSTR = w!("RamuletEdit");
 const W: f32 = 300.0;
@@ -37,8 +38,8 @@ struct State {
     title: String,
     s: f32,
     fonts: [HFONT; 3],
-    /// 底色、输入区、强调色
-    brushes: [HBRUSH; 3],
+    /// 面板底色、输入区、边框、透明色键、硬阴影
+    brushes: [HBRUSH; 5],
     text: COLORREF,
     muted: COLORREF,
     field: COLORREF,
@@ -90,18 +91,29 @@ unsafe extern "system" fn proc_(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
                     let s = st.s;
                     let mut rc = RECT::default();
                     let _ = GetClientRect(hwnd, &mut rc);
-                    FillRect(dc, &rc, st.brushes[0]);
                     let px = |v: f32| (v * s) as i32;
-                    // 输入区：底色一块，底边一条强调色（和 Win11 输入框一样）
-                    let field = RECT { left: px(PAD), top: px(38.0), right: rc.right - px(PAD), bottom: px(70.0) };
+                    // 窗口比面板大 SHADOW_POP：先铺透明色键，再画硬阴影、面板、2 px 边框
+                    let (pw, ph) = (rc.right - px(SHADOW_POP), rc.bottom - px(SHADOW_POP));
+                    FillRect(dc, &rc, st.brushes[3]);
+                    let (sh, panel) = (px(SHADOW_POP), RECT { left: 0, top: 0, right: pw, bottom: ph });
+                    FillRect(dc, &RECT { left: sh, top: sh, right: pw + sh, bottom: ph + sh }, st.brushes[4]);
+                    let frame = |r: &RECT, bw: i32| {
+                        for e in [RECT { bottom: r.top + bw, ..*r }, RECT { top: r.bottom - bw, ..*r }, RECT { right: r.left + bw, ..*r }, RECT { left: r.right - bw, ..*r }] {
+                            FillRect(dc, &e, st.brushes[2]);
+                        }
+                    };
+                    FillRect(dc, &panel, st.brushes[0]);
+                    frame(&panel, px(BORDER));
+                    // 输入区：底色一块，2 px 边框
+                    let field = RECT { left: px(PAD), top: px(38.0), right: pw - px(PAD), bottom: px(70.0) };
                     FillRect(dc, &field, st.brushes[1]);
-                    FillRect(dc, &RECT { top: field.bottom - px(2.0), ..field }, st.brushes[2]);
+                    frame(&field, px(BORDER));
                     SetBkMode(dc, TRANSPARENT);
                     let flags = DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX;
                     for (text, font, color, top, bottom) in [(st.title.as_str(), st.fonts[0], st.text, 10.0, 34.0), (tr("回车保存 · Esc 取消 · 清空恢复原名", "Enter to save · Esc to cancel · clear to reset"), st.fonts[1], st.muted, 74.0, 96.0)] {
                         SelectObject(dc, font.into());
                         SetTextColor(dc, color);
-                        let mut r = RECT { left: px(PAD), top: px(top), right: rc.right - px(PAD), bottom: px(bottom) };
+                        let mut r = RECT { left: px(PAD), top: px(top), right: pw - px(PAD), bottom: px(bottom) };
                         DrawTextW(dc, &mut wide(text), &mut r, flags);
                     }
                 }
@@ -150,20 +162,24 @@ pub fn open(main: isize, key: Key, title: String, current: String, at: POINT, da
         let (mut dx, mut dy) = (96, 96);
         let _ = GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &mut dx, &mut dy);
         let s = dx as f32 / 96.0;
-        let (w, h) = ((W * s) as i32, (H * s) as i32);
+        let (w, h) = (((W + SHADOW_POP) * s) as i32, ((H + SHADOW_POP) * s) as i32);
         let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
         let _ = GetMonitorInfoW(mon, &mut mi);
         let wa = mi.rcWork;
         let (x, y) = (at.x.clamp(wa.left, (wa.right - w).max(wa.left)), at.y.clamp(wa.top, (wa.bottom - h).max(wa.top)));
-        let Ok(hwnd) = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, CLASS, w!("Ramulet alias"), WS_POPUP | WS_THICKFRAME, x, y, w, h, None, None, None, None) else { return };
+        let Ok(hwnd) = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED, CLASS, w!("Ramulet alias"), WS_POPUP, x, y, w, h, None, None, None, None) else { return };
         let d = BOOL::from(dark);
         let _ = DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &d as *const _ as _, 4);
-        let corner = DWMWCP_ROUND;
+        let corner = DWMWCP_DONOTROUND;
         let _ = DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner as *const _ as _, 4);
 
-        let font = |size: f32, weight: i32| CreateFontW(-(size * s) as i32, 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, 0, w!("Segoe UI Variable Text"));
-        let [bg, field, accent, text, muted] = if dark { [0x2C2C2C, 0x3A3A3A, 0x60A5FA, 0xF3F3F3, 0xA8A8A8] } else { [0xF9F9F9, 0xFFFFFF, 0x2563EB, 0x1A1A1A, 0x6B6B6B] };
-        let eh = (20.0 * s) as i32;
+        // 洋红是透明色键，面板和阴影里不会出现
+        const KEY: u32 = 0xFF00FF;
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(colorref(KEY)), 0, LWA_COLORKEY);
+        let font = |size: f32, weight: i32| CreateFontW(-(size * s) as i32, 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, 0, w!("Microsoft YaHei UI"));
+        // 面板、输入区（用窗口底色，比面板低一档）、边框、字、淡字、硬阴影（色键窗口没有 alpha，取 20% 黑在底色上的近似）
+        let [bg, field, border, text, muted, shadow] = if dark { [SURFACE_DARK, BG_DARK, BORDER_DARK, TEXT_DARK, MUTED_DARK, 0x000000] } else { [SURFACE_LIGHT, BG_LIGHT, BORDER_LIGHT, TEXT_LIGHT, MUTED_LIGHT, 0xB9B8B4] };
+        let eh = (18.0 * s) as i32;
         let cur = wide(&current).into_iter().chain([0]).collect::<Vec<u16>>();
         let Ok(edit) = CreateWindowExW(
             WINDOW_EX_STYLE(0),
@@ -171,8 +187,8 @@ pub fn open(main: isize, key: Key, title: String, current: String, at: POINT, da
             PCWSTR(cur.as_ptr()),
             WS_CHILD | WS_VISIBLE | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
             ((PAD + 8.0) * s) as i32,
-            ((38.0 + 15.0) * s) as i32 - eh / 2,
-            w - ((2.0 * PAD + 16.0) * s) as i32,
+            ((38.0 + 16.0) * s) as i32 - eh / 2,
+            ((W - 2.0 * PAD - 16.0) * s) as i32,
             eh,
             Some(hwnd),
             None,
@@ -188,8 +204,8 @@ pub fn open(main: isize, key: Key, title: String, current: String, at: POINT, da
             edit,
             title,
             s,
-            fonts: [font(12.0, 600), font(11.0, 400), font(14.0, 400)],
-            brushes: [CreateSolidBrush(rgb(bg)), CreateSolidBrush(rgb(field)), CreateSolidBrush(rgb(accent))],
+            fonts: [font(13.0, 700), font(12.0, 400), font(13.0, 400)],
+            brushes: [CreateSolidBrush(rgb(bg)), CreateSolidBrush(rgb(field)), CreateSolidBrush(rgb(border)), CreateSolidBrush(rgb(KEY)), CreateSolidBrush(rgb(shadow))],
             text: rgb(text),
             muted: rgb(muted),
             field: rgb(field),
